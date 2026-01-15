@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Salesforce CRM Data Extractor",
+  "version": "1.0.0",
+  "description": "Extract Salesforce CRM data with React dashboard",
+
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "downloads"
+  ],
+
+  "host_permissions": [
+    "https://*.force.com/*",
+    "https://*.salesforce.com/*"
+  ],
+
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.force.com/*",
+        "https://*.salesforce.com/*"
+      ],
+      "js": ["contentscript.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "dist/index.html"
+  }
+}
+

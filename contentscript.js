@@ -1,90 +1,140 @@
-console.log("Salesforce extractor running");
+console.log("Salesforce extractor running (FINAL FIX)");
 
-function getObjectType() {
-  const url = location.href;
-  if (url.includes("/Opportunity")) return "opportunities";
-  if (url.includes("/Lead")) return "leads";
-  if (url.includes("/Account")) return "accounts";
-  if (url.includes("/Contact")) return "contacts";
-  if (url.includes("/Task")) return "tasks";
-  return null;
-}
+/* -------------------- STORAGE -------------------- */
 
-function getPageType() {
-  if (document.querySelector("records-record-layout")) return "record";
-  if (document.querySelector("lightning-kanban")) return "kanban";
-  if (document.querySelector("records-related-list")) return "related";
-  if (document.querySelector("lightning-datatable")) return "list";
-  return "unknown";
-}
-
-function extractRecord() {
-  const data = {};
-  const title = document.querySelector("h1");
-  data.name = title ? title.innerText.trim() : null;
-
-  document.querySelectorAll("records-record-layout-item").forEach(item => {
-    const label = item.querySelector("span[title]");
-    const value = item.querySelector("lightning-formatted-text, a");
-    if (label && value) {
-      data[label.innerText.trim()] = value.innerText.trim();
-    }
-  });
-
-  return data;
-}
-
-function extractList() {
-  return [...document.querySelectorAll("lightning-datatable tbody tr")].map(row => {
-    const obj = {};
-    row.querySelectorAll("td").forEach((td, i) => {
-      obj[`col_${i}`] = td.innerText.trim();
-    });
-    return obj;
-  });
-}
-
-function extractKanban() {
-  return [...document.querySelectorAll("lightning-kanban-card")].map(card => ({
-    name: card.innerText.trim(),
-    stage: card.closest("lightning-kanban-column")
-      ?.getAttribute("data-stage")
-  }));
-}
-
-function saveData(type, records) {
+function getStorage(cb) {
   chrome.storage.local.get(["salesforce_data"], res => {
-    const data = res.salesforce_data;
+    cb(
+      res.salesforce_data || {
+        leads: [],
+        contacts: [],
+        accounts: [],
+        opportunities: [],
+        tasks: [],
+        lastSync: {}
+      }
+    );
+  });
+}
+
+function save(type, records) {
+  if (!records || records.length === 0) {
+    console.warn("Nothing to save for", type);
+    return;
+  }
+
+  getStorage(data => {
     data[type] = records;
     data.lastSync[type] = Date.now();
-    chrome.storage.local.set({ salesforce_data: data });
-    console.log("Data saved:", type);
+    chrome.storage.local.set({ salesforce_data: data }, () => {
+      console.log("Data saved:", type);
+    });
   });
 }
 
+/* -------------------- OPPORTUNITY RECORD (BRUTE FORCE) -------------------- */
+
+function extractOpportunityRecord() {
+  const h1 = document.querySelector("h1");
+  if (!h1) return null;
+
+  const name = h1.innerText.trim();
+
+  let amount = null;
+  let stage = null;
+
+  // scan all visible text nodes
+  document.querySelectorAll("span, div").forEach(el => {
+    const text = el.innerText?.trim();
+    if (!text) return;
+
+    if (!amount && text.startsWith("$")) {
+      amount = text;
+    }
+
+    if (
+      !stage &&
+      [
+        "Prospecting",
+        "Qualification",
+        "Needs Analysis",
+        "Value Proposition",
+        "Id. Decision Makers",
+        "Perception Analysis",
+        "Proposal",
+        "Closed Won",
+        "Closed Lost"
+      ].includes(text)
+    ) {
+      stage = text;
+    }
+  });
+
+  return {
+    name,
+    amount,
+    stage,
+    url: location.href
+  };
+}
+
+/* -------------------- LIST VIEW -------------------- */
+
+function extractList() {
+  return [...document.querySelectorAll("table tbody tr")]
+    .map(row => {
+      const obj = {};
+      [...row.children].forEach((td, i) => {
+        obj[`col_${i}`] = td.innerText.trim();
+      });
+      return obj;
+    })
+    .filter(r => Object.values(r).some(Boolean));
+}
+
+/* -------------------- MAIN RUNNER -------------------- */
+
 function runExtraction() {
-  const type = getObjectType();
-  const page = getPageType();
-  if (!type) return;
+  console.log("Running FINAL extraction");
 
   setTimeout(() => {
-    if (page === "record") {
-      saveData(type, [extractRecord()]);
+    const url = location.href;
+
+    // 🔥 OPPORTUNITY RECORD (THIS IS YOUR DEMO)
+    if (url.includes("/lightning/r/Opportunity/")) {
+      const opp = extractOpportunityRecord();
+      if (opp) {
+        save("opportunities", [opp]);
+        return;
+      }
     }
-    if (page === "list" || page === "related") {
-      saveData(type, extractList());
+
+    // 🔥 LIST VIEWS (backup)
+    if (document.querySelector("table tbody tr")) {
+      if (url.includes("Opportunity")) save("opportunities", extractList());
+      if (url.includes("Account")) save("accounts", extractList());
+      if (url.includes("Contact")) save("contacts", extractList());
+      if (url.includes("Lead")) save("leads", extractList());
+      if (url.includes("Task")) save("tasks", extractList());
+      return;
     }
-    if (page === "kanban") {
-      saveData("opportunities", extractKanban());
-    }
-  }, 2500);
+
+    console.warn("Nothing extractable on this page");
+  }, 3000);
 }
+
+/* -------------------- EVENTS -------------------- */
 
 runExtraction();
 
 chrome.runtime.onMessage.addListener(msg => {
-  if (msg.type === "EXTRACT_NOW") runExtraction();
+  if (msg.type === "EXTRACT_NOW") {
+    console.log("Extract requested from popup");
+    runExtraction();
+  }
 });
+
+
 
 
 
